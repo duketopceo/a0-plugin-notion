@@ -109,6 +109,23 @@ def test_ingest_rejects_bad_uri():
         list(atoms.ingest("notion://other/x", object()))
 
 
+def test_ingest_file_tolerates_bom_and_escapes(tmp_path):
+    """Windows-produced exports carry a BOM; file:// URIs carry percent
+    escapes — both must ingest."""
+    p = tmp_path / "my export.notion.json"
+    p.write_text('\ufeff[{"id":"p1","title":"T"}]', encoding="utf-8")
+    out = list(atoms.ingest(f"file://{str(p).replace(' ', '%20')}"))
+    assert out[0]["id"] == "p1"
+
+
+def test_ingest_rejects_remote_export_url():
+    """https://x/y.notion.json must NOT pass can_ingest then die as a
+    bogus local path."""
+    assert atoms.can_ingest("https://evil.test/x.notion.json") is False
+    with pytest.raises(ValueError):
+        list(atoms.ingest("https://evil.test/x.notion.json"))
+
+
 def test_can_ingest():
     assert atoms.can_ingest("notion://database/x")
     assert atoms.can_ingest("/tmp/foo.notion.json")

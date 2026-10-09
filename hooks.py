@@ -12,10 +12,6 @@ def install(**kwargs):
     log.info("a0-plugin-notion installed")
 
 
-def update(**kwargs):
-    install(**kwargs)
-
-
 def uninstall(**kwargs):
     """Remove our mcp_servers entry so the server stops spawning; the
     secrets vault is untouched (token stays where the user put it)."""

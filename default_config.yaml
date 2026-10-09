@@ -6,8 +6,12 @@
 enabled: false
 
 # Name of the secret holding the Notion integration token — looked up in
-# usr/secrets.env (the §§secret(...) vault) and in the process
-# environment. The VALUE never lands in settings.json.
+# the a0 secret store (usr/secrets.env, then usr/.env — same files
+# §§secret(...) resolves) and in the spawned server's environment. The
+# VALUE never lands in settings.json.
+# WARNING: this selects ANY vault key — pointing it at an unrelated
+# secret would send that secret to api.notion.com. Keep it a
+# NOTION_*-named key.
 secret_name: "NOTION_TOKEN"
 
 # Notion REST API version header.

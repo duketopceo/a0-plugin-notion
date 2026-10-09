@@ -19,7 +19,9 @@ is `a0-plugin-notion` but the install path must be `notion`).
    copy the internal token (`ntn_…`), and share the pages/databases you want
    a0 to reach with that integration.
 2. Add `NOTION_TOKEN=ntn_…` to the **a0 secrets vault** (Settings → Secrets —
-   backed by `usr/secrets.env`), or export `NOTION_TOKEN` in a0's environment.
+   backed by `usr/secrets.env`; `usr/.env` works too — the server resolves
+   both, same as `§§secret()`), or export `NOTION_TOKEN` in the spawned
+   server's environment.
 
 Set `enabled: true` in the plugin config and restart — the plugin registers
 `a0_notion` in `settings["mcp_servers"]` (idempotent, preserves your other
@@ -50,10 +52,10 @@ non-secret config (`NOTION_SECRET_NAME`, `NOTION_API_VERSION`, result caps) —
 never `NOTION_TOKEN`, which would sit plaintext in settings.json.
 Instead the spawned server resolves the token *inside its own process*:
 
-1. `NOTION_TOKEN` (or `secret_name`) in the process env — covers manual
-   runs and operators who inject secrets another way.
-2. `usr/secrets.env` — the same vault `§§secret(NOTION_TOKEN)` resolves
-   against; the server self-locates the a0 root from `__file__`.
+1. `NOTION_TOKEN` (or `secret_name`) in the spawned server's env — covers
+   standalone runs and operators who inject secrets another way.
+2. `usr/secrets.env`, then `usr/.env` — the same files `§§secret(NOTION_TOKEN)`
+   resolves against; the server self-locates the a0 root from `__file__`.
 
 So the vault stays the single source of truth and settings.json only ever
 holds `{type: stdio, command, args, env: non-secret config}` — no secrets.
@@ -109,6 +111,12 @@ stubbed where needed, no network, no token.
   Notion's model, not a plugin limit.
 - `child_page`/`child_database` blocks appear as `[page]`/`[database]`
   stubs in `get_page_content` — open them with their own ids (one fetch
-  level per call keeps responses bounded).
+  level per call keeps responses bounded); table rows and toggle contents
+  likewise appear as `[table]`/`▸` stubs.
+- `.notion.json` ingestion reads local exports — URIs are operator-trusted
+  (no directory confinement); don't point it at untrusted paths.
+- Disabling the plugin (`enabled: false`) unregisters the MCP entry on the
+  next `configure()`; the a0 plugin toggle (which skips plugin code) leaves
+  it — delete `a0_notion` from MCP servers to fully remove it.
 - API surface is pinned to `Notion-Version: 2022-06-28` (config-overridable
   when Notion's dated API moves).

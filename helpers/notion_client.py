@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import quote
@@ -40,7 +41,7 @@ def _clean_id(raw: str) -> str:
     if m:
         c = m.group(1).lower()
         return f"{c[:8]}-{c[8:12]}-{c[12:16]}-{c[16:20]}-{c[20:]}"
-    return s
+    return quote(s, safe="")  # non-UUID fallback can't smuggle path chars
 
 
 class NotionClient:
@@ -65,10 +66,10 @@ class NotionClient:
         if not token:
             raise NotionError("Notion token is empty")
         self._headers = {
-            "Authorization": f"Bearer {token}",
             "Notion-Version": api_version,
             "Content-Type": "application/json",
         }
+        self._auth = f"Bearer {token}"
         self._timeout = timeout
         self._opener = opener or urllib.request.urlopen
 
@@ -81,20 +82,43 @@ class NotionClient:
         req = urllib.request.Request(
             f"{NOTION_API_ROOT}{path}", data=data, headers=self._headers, method=method
         )
-        try:
-            with self._opener(req, timeout=self._timeout) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
+        # unredirected — urllib copies Authorization to ANY redirect
+        # target; a token must never follow a 30x off api.notion.com
+        req.add_unredirected_header("Authorization", self._auth)
+        for attempt in range(2):
             try:
-                detail = exc.read(8192).decode("utf-8", errors="replace")[:300]
-            except Exception:
+                with self._opener(req, timeout=self._timeout) as resp:
+                    raw = resp.read().decode("utf-8")
+                break
+            except urllib.error.HTTPError as exc:
                 detail = ""
-            code = exc.code
+                try:
+                    detail = exc.read(8192).decode("utf-8", errors="replace")[:300]
+                except Exception:
+                    pass
+                if exc.code == 429 and attempt == 0:
+                    # Notion rate-limits ~3 req/s — one bounded retry
+                    # honoring Retry-After beats a flat failure
+                    retry_s = 1.0
+                    try:
+                        retry_s = min(5.0, max(0.1, float(exc.headers.get("Retry-After", 1))))
+                    except (TypeError, ValueError):
+                        pass
+                    time.sleep(retry_s)
+                    continue
+                raise NotionError(
+                    f"Notion API {method} {path} failed (HTTP {exc.code}): {detail}"
+                ) from exc
+            except urllib.error.URLError as exc:
+                raise NotionError(f"Notion API unreachable: {exc.reason}") from exc
+            except (TimeoutError, OSError) as exc:
+                raise NotionError(f"Notion API {method} {path} failed: {exc}") from exc
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
             raise NotionError(
-                f"Notion API {method} {path} failed (HTTP {code}): {detail}"
+                f"Notion API {method} {path} returned malformed JSON"
             ) from exc
-        except urllib.error.URLError as exc:
-            raise NotionError(f"Notion API unreachable: {exc.reason}") from exc
         if not isinstance(payload, dict):
             raise NotionError("Unexpected Notion API response shape")
         return payload

@@ -146,6 +146,38 @@ def test_token_never_in_error():
     assert "Authorization" not in str(exc.value)
 
 
+def test_429_retries_once_with_retry_after(monkeypatch):
+    """One bounded retry honoring Retry-After — then a clean error."""
+    import urllib.error as ue
+    from usr.plugins.notion.helpers import notion_client as nc
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(nc.time, "sleep", sleeps.append)
+
+    calls = [0]
+
+    class Resp429(ue.HTTPError):
+        def __init__(self):
+            super().__init__("u", 429, "rate", {"Retry-After": "0.2"},
+                             io.BytesIO(b'{"message":"rate_limited"}'))
+
+    def flaky(req, timeout=None):
+        calls[0] += 1
+        if calls[0] == 1:
+            raise Resp429()
+        return FakeResponse({"results": [{"object": "page", "id": "p"}]})
+
+    out = NotionClient("t", timeout=5, opener=flaky).search("q")
+    assert [r["id"] for r in out] == ["p"]
+    assert calls[0] == 2 and sleeps == [0.2]
+
+    def always429(req, timeout=None):
+        raise Resp429()
+
+    with pytest.raises(NotionError, match="HTTP 429"):
+        NotionClient("t", timeout=5, opener=always429).search("q")
+
+
 def test_empty_token_refused():
     with pytest.raises(NotionError):
         NotionClient("")

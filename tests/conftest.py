@@ -44,11 +44,21 @@ sys.modules["usr.plugins.notion"] = _notion
 
 
 class Extension:
-    def __init__(self, agent=None, **kw):
+    """Matches host helpers/extension.py: agent is required, kwargs kept."""
+
+    def __init__(self, agent, **kwargs):
         self.agent = agent
+        self.kwargs = kwargs
 
 
 class ApiHandler:
+    """Matches host helpers/api.py: __init__(app, thread_lock) is
+    required — handlers that forget it die at route registration."""
+
+    def __init__(self, app, thread_lock):
+        self.app = app
+        self.thread_lock = thread_lock
+
     @classmethod
     def requires_auth(cls) -> bool:
         return True
@@ -57,8 +67,27 @@ class ApiHandler:
     def requires_csrf(cls) -> bool:
         return True
 
+    @classmethod
+    def requires_api_key(cls) -> bool:
+        return False
+
+    @classmethod
+    def requires_loopback(cls) -> bool:
+        return False
+
+    @classmethod
+    def get_methods(cls) -> list:
+        return ["POST"]
+
     async def process(self, input, request):
         raise NotImplementedError
+
+
+import asyncio as _asyncio
+
+
+def run(coro):
+    return _asyncio.run(coro)
 
 
 _ext_mod = types.ModuleType("helpers.extension")
@@ -75,13 +104,24 @@ def _get_settings():
 
 
 def _set_settings(new):
+    """Models the REAL host semantics: set_settings is a whole-settings
+    replace (normalize_settings drops unknown keys + fills defaults).
+    Plugins must never call it with a partial dict — set_settings_delta
+    is the merge API."""
+    _settings_state.clear()
     _settings_state.update(new or {})
+    return dict(_settings_state)
+
+
+def _set_settings_delta(delta):
+    _settings_state.update(delta or {})
     return dict(_settings_state)
 
 
 _settings_mod = types.ModuleType("helpers.settings")
 _settings_mod.get_settings = _get_settings
 _settings_mod.set_settings = _set_settings
+_settings_mod.set_settings_delta = _set_settings_delta
 _settings_mod._state = _settings_state
 
 _plugin_config: dict = {}

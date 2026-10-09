@@ -42,6 +42,20 @@ Plugin surface only — **no upstream edits**.
   `error: …` strings, not exceptions (MCP surfaces them to the agent).
 - **`mcp` is an a0 dep**: FastMCP import failure = wrong interpreter —
   the entry pins `sys.executable` at configure time for that reason.
+- **Settings writes MUST use `set_settings_delta`** — `set_settings()` is
+  a whole-settings replace; `normalize_settings` fills missing keys with
+  defaults and the sensitive-write path deletes vault secrets and auth.
+  `mcp_register._write` mirrors `api/mcp_servers_apply.py`'s `[]`→value
+  two-step and rolls back on failure.
+- **`mcpServers` shape tolerance**: host `normalize_config` accepts dict,
+  list-of-named-dicts, and bare single-server object — `_parse_config`
+  normalizes all three; a corrupt non-empty blob refuses to write.
+- **Re-register preserves user keys** (`disabled`, `disabled_tools`,
+  `init_timeout`, `tool_timeout`) — the MCP UI edits live there.
+- **enabled:false unregisters** the entry (auto-manage mode only) —
+  a disabled plugin with a live tool surface is a lie.
+- **`_clean_id` fallback is `quote()`d**; `Authorization` is
+  `add_unredirected_header` (urllib forwards auth across 30x).
 
 ## Tests
 

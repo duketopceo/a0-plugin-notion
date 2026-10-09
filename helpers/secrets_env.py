@@ -21,9 +21,10 @@ from pathlib import Path
 
 
 def parse_env_file(text: str) -> dict[str, str]:
-    """Minimal dotenv parse — KEY=VALUE, comments, single/double quotes,
-    ``export`` prefix tolerated. Deliberately independent of a0 helpers so
-    the MCP subprocess needs nothing but stdlib."""
+    """Minimal dotenv parse matching a0's python-dotenv semantics —
+    keys UPPERCASED, comments, ``export`` prefix, single/double quotes,
+    inline comments on unquoted values. Deliberately independent of a0
+    helpers so the MCP subprocess needs nothing but stdlib."""
     out: dict[str, str] = {}
     for raw in text.splitlines():
         line = raw.strip()
@@ -34,10 +35,12 @@ def parse_env_file(text: str) -> dict[str, str]:
         if "=" not in line:
             continue
         key, _, value = line.partition("=")
-        key = key.strip()
+        key = key.strip().upper()  # dotenv normalizes keys to uppercase
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
+        elif " #" in value:  # dotenv strips inline comments on bare values
+            value = value.split(" #", 1)[0].rstrip()
         if key:
             out[key] = value
     return out
@@ -55,17 +58,26 @@ def a0_root_from(path: str | Path) -> Path | None:
     return None
 
 
+_VAULT_FILES = ("secrets.env", ".env")  # a0's secret store covers both
+
+
 def read_vault(secret_name: str, *, a0_root: Path | None = None) -> str:
-    """Read *secret_name* from ``usr/secrets.env`` under *a0_root* (or the
-    self-located root). Empty string when absent — never raises."""
+    """Read *secret_name* from the a0 secret store under *a0_root* (or the
+    self-located root) — ``usr/secrets.env`` first, then ``usr/.env``
+    (helpers/secrets.py resolves §§secret() over the same files; secrets.env
+    wins, matching the store's precedence). Empty when absent — never raises."""
     root = a0_root or a0_root_from(__file__)
     if root is None:
         return ""
-    try:
-        text = (root / "usr" / "secrets.env").read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    return parse_env_file(text).get(secret_name, "")
+    for name in _VAULT_FILES:
+        try:
+            text = (root / "usr" / name).read_text(encoding="utf-8-sig")
+        except OSError:
+            continue
+        value = parse_env_file(text).get(secret_name.upper())
+        if value:
+            return value
+    return ""
 
 
 def resolve_token(
@@ -74,9 +86,10 @@ def resolve_token(
     a0_root: Path | None = None,
     environ: dict[str, str] | None = None,
 ) -> str:
-    """First hit wins: process env → vault file → empty."""
+    """First hit wins: process env → vault file → empty. Secret names are
+    looked up uppercased — matching §§secret()/dotenv normalization."""
     env = environ if environ is not None else os.environ
-    token = str(env.get(secret_name) or "").strip()
+    token = str(env.get(secret_name) or env.get(secret_name.upper()) or "").strip()
     if token:
         return token
     return read_vault(secret_name, a0_root=a0_root).strip()

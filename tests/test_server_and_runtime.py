@@ -56,6 +56,10 @@ def _load_server(token=""):
     try:
         spec.loader.exec_module(mod)
     finally:
+        # the module self-inserted its plugin dir at sys.path[0] — evict
+        plugin_dir = str(SERVER_PATH.parent.parent)
+        if plugin_dir in sys.path:
+            sys.path.remove(plugin_dir)
         for k in list(sys.modules):
             if k == "helpers" or k.startswith("helpers."):
                 sys.modules.pop(k)
@@ -151,16 +155,22 @@ def test_missing_token_errors_call_not_handshake(monkeypatch, tmp_path):
     assert "token not configured" in out
 
 
-def test_runtime_status_shape(enabled_cfg):
-    from usr.plugins.notion.helpers import runtime
+def test_runtime_status_shape(enabled_cfg, settings_state):
+    from usr.plugins.notion.helpers import runtime, mcp_register
+
+    # pre-configure: same key set, configured flag off
+    st0 = runtime.status()
+    assert st0["enabled"] is False and st0["configured"] is False
+    assert st0["mcp_registered"] is False and st0["token_present"] is False
 
     runtime.configure(enabled_cfg)
     st = runtime.status()
     assert st["enabled"] is True and st["configured"] is True
     assert st["secret_name"] == "NOTION_TOKEN"
-    # no token VALUE may appear — only names/flags
-    for key in ("token_present", "mcp_registered", "server_name"):
-        assert key in st
+    assert st["mcp_registered"] is True  # configure registered it
+    assert st["server_name"] == mcp_register.SERVER_NAME
+    assert st["token_present"] is False  # nothing in vault under test
+    assert "config" in st and st["config"]["enabled"] is True
 
 
 def test_runtime_disabled_is_inert():
@@ -185,3 +195,15 @@ def test_configure_disabled_no_register(settings_state):
 
     runtime.configure({"enabled": False, "auto_register_mcp": True})
     assert mcp_register.SERVER_NAME not in settings_state.get("mcp_servers", "")
+
+
+def test_disable_unregisters(settings_state, enabled_cfg):
+    """Flipping enabled:false must tear the entry down — otherwise the
+    spawned server stays live behind a disabled plugin."""
+    from usr.plugins.notion.helpers import runtime, mcp_register
+
+    runtime.configure(enabled_cfg)
+    assert mcp_register.is_registered(settings_state["mcp_servers"])
+    runtime.configure({"enabled": False})
+    assert mcp_register.SERVER_NAME not in settings_state["mcp_servers"]
+    assert runtime.is_active() is False

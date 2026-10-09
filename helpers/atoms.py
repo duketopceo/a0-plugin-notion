@@ -9,6 +9,12 @@ already speak (``id``, ``title``, ``content``, ``tags``, ``source``,
 
 Bulk/scheduled sync is deliberately out of scope (Khan#196: ingestion
 jobs call dlt/readers); this module provides the mapping both paths use.
+
+SECURITY: ingest URIs are OPERATOR-TRUSTED. The file path is suffix-keyed
+(``.notion.json``), not confined to a directory — a pipeline that feeds
+untrusted URIs into ``ingest()`` is handing file-read to that source, and
+crafted exports become atoms in downstream stores (indirect prompt
+injection). Only ingest exports the operator placed deliberately.
 """
 
 from __future__ import annotations
@@ -16,7 +22,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Iterator
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from usr.plugins.notion.helpers.notion_client import NotionClient
 from usr.plugins.notion.helpers.notion_fmt import extract_title
@@ -52,7 +58,11 @@ def _uri_kind(uri: str) -> str | None:
     if lower.startswith("notion://"):
         return "notion"
     if lower.endswith(".notion.json"):
-        return "file"
+        # only file:// or a bare path is ingestible — an http(s) URL ending
+        # in .notion.json would otherwise pass can_ingest and then die in
+        # ingest() as a bogus local path
+        scheme = urlparse(str(uri or "")).scheme.lower()
+        return "file" if scheme in ("", "file") else None
     return None
 
 
@@ -74,7 +84,7 @@ def ingest_file(path: Path) -> Iterator[dict[str, Any]]:
             f"{path} is {size / 1e6:.0f} MB — over the {_MAX_EXPORT_BYTES // 2**20} MB "
             "export cap; split the export or stream it through dlt"
         )
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8-sig"))  # tolerate BOM
     if not isinstance(data, list):
         raise ValueError(f"Expected array of page objects in {path}")
     for page in data:
@@ -107,7 +117,15 @@ def ingest(uri: str, client: NotionClient | None = None) -> Iterator[dict[str, A
         return
     if kind == "file":
         raw = str(uri)
-        path = Path(urlparse(raw).path if raw.lower().startswith("file://") else raw)
+        if raw.lower().startswith("file://"):
+            parsed = urlparse(raw)
+            if parsed.netloc.lower() not in ("", "localhost"):
+                raise ValueError(
+                    f"Remote file:// host not supported: {parsed.netloc}"
+                )
+            path = Path(unquote(parsed.path))
+        else:
+            path = Path(raw)
         if not path.is_file():
             raise FileNotFoundError(f"No such file: {path}")
         yield from ingest_file(path)
