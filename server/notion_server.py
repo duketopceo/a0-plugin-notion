@@ -18,7 +18,6 @@ Standalone use is supported too::
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -37,18 +36,19 @@ except ImportError:  # pragma: no cover - only outside the a0 venv
     )
     raise
 
+from helpers.config import get_config  # noqa: E402
 from helpers.notion_client import NotionClient, NotionError  # noqa: E402
 from helpers.notion_fmt import (  # noqa: E402
-    block_to_line,
-    page_summary,
-    prop_value,
+    blocks_to_text,
+    page_detail,
+    results_payload,
 )
 from helpers.secrets_env import a0_root_from, resolve_token  # noqa: E402
 
-SECRET_NAME = os.environ.get("NOTION_SECRET_NAME", "NOTION_TOKEN")
-API_VERSION = os.environ.get("NOTION_API_VERSION", "2022-06-28")
-MAX_RESULTS = int(os.environ.get("NOTION_MAX_SEARCH_RESULTS", "25") or 25)
-MAX_BLOCKS = int(os.environ.get("NOTION_MAX_PAGE_BLOCKS", "500") or 500)
+# get_config({}) applies the NOTION_* env overrides with coercion/clamps —
+# the same NotionConfig the host side uses (helpers.plugins is absent in
+# this namespace, so the host lookup silently no-ops to env+defaults).
+CFG = get_config({})
 
 mcp = FastMCP("a0-notion")
 
@@ -60,13 +60,15 @@ def _get_client() -> NotionClient:
     not the whole MCP handshake (a0 would otherwise show a dead server)."""
     global _client
     if _client is None:
-        token = resolve_token(SECRET_NAME, a0_root=a0_root_from(__file__))
+        token = resolve_token(CFG.secret_name, a0_root=a0_root_from(__file__))
         if not token:
             raise NotionError(
-                f"Notion token not configured — add '{SECRET_NAME}' to the a0 "
+                f"Notion token not configured — add '{CFG.secret_name}' to the a0 "
                 "secrets vault (usr/secrets.env) or set it in the environment."
             )
-        _client = NotionClient(token, api_version=API_VERSION)
+        _client = NotionClient(
+            token, api_version=CFG.api_version, timeout=CFG.http_timeout_s
+        )
     return _client
 
 
@@ -77,12 +79,9 @@ def _err(exc: Exception) -> str:
 
 def page_content_text(client: NotionClient, page_id: str, max_blocks: int) -> str:
     """Fetch + flatten a page's block tree to readable text."""
-    lines = [
-        line
-        for b in client.get_block_children(page_id, max_blocks=max_blocks)
-        if (line := block_to_line(b)) is not None
-    ]
-    return "\n".join(lines)
+    return blocks_to_text(
+        client.get_block_children(page_id, max_blocks=max_blocks)
+    )
 
 
 # ------------------------------- tools ------------------------------------
@@ -99,12 +98,9 @@ def notion_search(query: str, filter_object: str = "", page_size: int = 10) -> s
     try:
         results = _get_client().search(
             query, filter_object=filter_object or None,
-            page_size=min(page_size, MAX_RESULTS),
+            page_size=max(1, min(page_size, CFG.max_search_results)),
         )
-        return json.dumps(
-            {"count": len(results), "results": [page_summary(r) for r in results]},
-            ensure_ascii=False, indent=2,
-        )
+        return json.dumps(results_payload(results), ensure_ascii=False, indent=2)
     except Exception as exc:
         return _err(exc)
 
@@ -113,13 +109,10 @@ def notion_search(query: str, filter_object: str = "", page_size: int = 10) -> s
 def notion_get_page(page_id: str) -> str:
     """Fetch a Notion page's metadata: title, url, parent, properties."""
     try:
-        page = _get_client().get_page(page_id)
-        out = page_summary(page)
-        props = page.get("properties") or {}
-        out["properties"] = {
-            name: prop_value(p) for name, p in props.items() if isinstance(p, dict)
-        }
-        return json.dumps(out, ensure_ascii=False, indent=2)
+        return json.dumps(
+            page_detail(_get_client().get_page(page_id)),
+            ensure_ascii=False, indent=2,
+        )
     except Exception as exc:
         return _err(exc)
 
@@ -127,10 +120,11 @@ def notion_get_page(page_id: str) -> str:
 @mcp.tool()
 def notion_get_page_content(page_id: str, max_blocks: int = 0) -> str:
     """Read a page's content as flattened text (headings, lists, code,
-    tables). child_page / child_database blocks appear as [page] /
-    [database] stubs to open separately."""
+    todos, quotes). One fetch level: nested content inside tables,
+    toggles, and child_page / child_database blocks appears as [type]
+    stubs to open with their own ids."""
     try:
-        cap = min(max_blocks or MAX_BLOCKS, MAX_BLOCKS)
+        cap = max(1, min(max_blocks or CFG.max_page_blocks, CFG.max_page_blocks))
         return page_content_text(_get_client(), page_id, cap) or "(empty page)"
     except Exception as exc:
         return _err(exc)
@@ -155,12 +149,10 @@ def notion_query_database(
             if not isinstance(filt, dict):
                 return "error: filter_json must decode to an object"
         rows = _get_client().query_database(
-            database_id, filter_body=filt, page_size=min(page_size, MAX_RESULTS)
+            database_id, filter_body=filt,
+            page_size=max(1, min(page_size, CFG.max_search_results)),
         )
-        return json.dumps(
-            {"count": len(rows), "results": [page_summary(r) for r in rows]},
-            ensure_ascii=False, indent=2,
-        )
+        return json.dumps(results_payload(rows), ensure_ascii=False, indent=2)
     except Exception as exc:
         return _err(exc)
 

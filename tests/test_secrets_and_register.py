@@ -72,8 +72,37 @@ def test_register_merges_into_existing_settings(settings_state):
     entry = data["mcpServers"][mcp_register.SERVER_NAME]
     assert entry["type"] == "stdio"
     assert entry["args"][0].endswith("notion_server.py")
-    assert "env" not in entry  # no secrets in settings.json — token resolves in-process
+    # env carries only non-secret NOTION_* config — the token itself never
+    # lands in settings.json (it's resolved inside the spawned process)
+    assert "NOTION_TOKEN" not in json.dumps(entry)
+    assert set(entry.get("env", {})) <= {
+        "NOTION_SECRET_NAME", "NOTION_API_VERSION", "NOTION_HTTP_TIMEOUT_S",
+        "NOTION_MAX_SEARCH_RESULTS", "NOTION_MAX_PAGE_BLOCKS",
+    }
     assert mcp_register.register() is False  # idempotent
+
+
+def test_register_propagates_non_secret_config(settings_state):
+    """Plugin config must reach the spawned server via the entry env —
+    the safe-listed child env makes it the only channel. Token: never."""
+    from usr.plugins.notion.helpers.config import NotionConfig
+
+    cfg = NotionConfig(secret_name="MY_NOTION_KEY", api_version="2025-01-01",
+                       http_timeout_s=45.0, max_search_results=10,
+                       max_page_blocks=100)
+    assert mcp_register.register(cfg) is True
+    entry = json.loads(settings_state["mcp_servers"])["mcpServers"][
+        mcp_register.SERVER_NAME]
+    env = entry["env"]
+    assert env["NOTION_SECRET_NAME"] == "MY_NOTION_KEY"
+    assert env["NOTION_HTTP_TIMEOUT_S"] == "45.0"
+    assert "NOTION_TOKEN" not in json.dumps(entry)
+    # a different cfg → re-register (not idempotent on stale entries)
+    cfg2 = NotionConfig(secret_name="OTHER_KEY")
+    assert mcp_register.register(cfg2) is True
+    env2 = json.loads(settings_state["mcp_servers"])["mcpServers"][
+        mcp_register.SERVER_NAME]["env"]
+    assert env2["NOTION_SECRET_NAME"] == "OTHER_KEY"
 
 
 def test_register_on_malformed_settings_rebuilds(settings_state):

@@ -14,7 +14,7 @@ Stubs model a0's real contracts:
 
 from __future__ import annotations
 
-import asyncio
+import io
 import sys
 import types
 from pathlib import Path
@@ -106,20 +106,13 @@ sys.modules["helpers.settings"] = _settings_mod
 sys.modules["helpers.plugins"] = _plugins_mod
 
 
-def run(coro):
-    return asyncio.run(coro)
-
-
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch, tmp_path):
     """Ambient NOTION_* env vars must never reach tests — _merge_env
     applies env over explicit config."""
-    for var in (
-        "NOTION_ENABLED", "NOTION_TOKEN", "NOTION_SECRET_NAME",
-        "NOTION_API_VERSION", "NOTION_HTTP_TIMEOUT_S",
-        "NOTION_MAX_SEARCH_RESULTS", "NOTION_MAX_PAGE_BLOCKS",
-        "NOTION_AUTO_REGISTER_MCP",
-    ):
+    from usr.plugins.notion.helpers.config import _ENV_MAP
+
+    for var in [env for env, _ in _ENV_MAP.values()] + ["NOTION_TOKEN"]:
         monkeypatch.delenv(var, raising=False)
     _settings_state.clear()
     _plugin_config.clear()
@@ -184,7 +177,7 @@ class FakeNotionHTTP:
         self.calls: list[tuple[str, str, bytes | None]] = []
 
     def open(self, req, timeout=None):
-        path = req.full_url.split("api.notion.com")[-1].split("/v1", 1)[-1]
+        path = req.full_url.split("api.notion.com")[-1].split("/v1", 1)[-1].split("?")[0]
         method = req.get_method()
         self.calls.append((method, path, req.data))
         for (m, suffix), payload in self.routes.items():
@@ -193,7 +186,6 @@ class FakeNotionHTTP:
                     payload = payload.pop(0)
                 return FakeResponse(payload)
         import urllib.error
-        import io
 
         raise urllib.error.HTTPError(
             req.full_url, 404, "Not Found", {}, io.BytesIO(b'{"message":"missing"}')

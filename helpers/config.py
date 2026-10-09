@@ -34,6 +34,9 @@ class NotionConfig:
     auto_register_mcp: bool = True
 
     def __post_init__(self) -> None:
+        # raw-dict callers can hand us truthy strings ("false") — coerce
+        self.enabled = _bool(self.enabled)
+        self.auto_register_mcp = _bool(self.auto_register_mcp)
         self.secret_name = str(self.secret_name or "NOTION_TOKEN").strip() or "NOTION_TOKEN"
         self.api_version = str(self.api_version or "2022-06-28").strip() or "2022-06-28"
         try:

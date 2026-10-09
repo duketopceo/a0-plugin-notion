@@ -1,4 +1,4 @@
-"""Notion object → text/dict formatting — pure stdlib, zero imports.
+"""Notion object → text/dict formatting — stdlib only, no a0 imports.
 
 Shared by the MCP server (which runs in a subprocess where only the
 plugin dir is on sys.path) and by host-side helpers. Keep this module
@@ -11,40 +11,36 @@ from __future__ import annotations
 from typing import Any
 
 
+def _title_of(entries: Any) -> str:
+    """First non-empty rich_text flatten — handles multi-segment titles
+    (formatting splits the array) and the plain_text fallback."""
+    text = rich_text(entries if isinstance(entries, list) else []).strip()
+    return text
+
+
 def extract_title(page: dict[str, Any]) -> str:
     """Best available title for a Notion page object."""
     properties = page.get("properties") or {}
     title_prop = properties.get("title")
     if isinstance(title_prop, dict):
-        title_entries = title_prop.get("title") or []
-        if isinstance(title_entries, list) and title_entries:
-            first = title_entries[0]
-            if isinstance(first, dict):
-                text = first.get("text") or {}
-                content = text.get("content")
-                if isinstance(content, str) and content.strip():
-                    return content.strip()
+        t = _title_of(title_prop.get("title"))
+        if t:
+            return t
 
     top_title = page.get("title")
     if isinstance(top_title, str) and top_title.strip():
         return top_title.strip()
-    if isinstance(top_title, list) and top_title:
-        first = top_title[0]
-        if isinstance(first, dict):
-            text = first.get("text") or {}
-            content = text.get("content")
-            if isinstance(content, str) and content.strip():
-                return content.strip()
+    t = _title_of(top_title)
+    if t:
+        return t
 
     # Fallback: any title-typed property (database title columns can be
     # named anything).
     for prop in properties.values():
         if isinstance(prop, dict) and prop.get("type") == "title":
-            entries = prop.get("title") or []
-            if entries and isinstance(entries[0], dict):
-                content = (entries[0].get("text") or {}).get("content")
-                if isinstance(content, str) and content.strip():
-                    return content.strip()
+            t = _title_of(prop.get("title"))
+            if t:
+                return t
     return "Untitled"
 
 
@@ -118,6 +114,43 @@ def page_summary(page: dict[str, Any]) -> dict[str, Any]:
         "last_edited_time": page.get("last_edited_time"),
         "parent": page.get("parent"),
     }
+
+
+def page_detail(page: dict[str, Any]) -> dict[str, Any]:
+    """page_summary + compacted property values (get_page tool shape)."""
+    out = page_summary(page)
+    props = page.get("properties") or {}
+    out["properties"] = {
+        name: prop_value(p) for name, p in props.items() if isinstance(p, dict)
+    }
+    return out
+
+
+def results_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """The {count, results:[summary]} envelope both list-tools emit."""
+    return {"count": len(items), "results": [page_summary(i) for i in items]}
+
+
+_TEXT_BUDGET = 100_000  # chars — flattened text lands in an agent context
+
+
+def blocks_to_text(
+    blocks: list[dict[str, Any]], *, text_budget: int = _TEXT_BUDGET
+) -> str:
+    """Flatten a block list to readable text with a cumulative char
+    budget — block *count* caps don't bound rich_text size."""
+    lines: list[str] = []
+    total = 0
+    for block in blocks:
+        line = block_to_line(block)
+        if line is None:
+            continue
+        if total + len(line) > text_budget:
+            lines.append("…[truncated]")
+            break
+        lines.append(line)
+        total += len(line) + 1
+    return "\n".join(lines)
 
 
 def prop_value(prop: dict[str, Any]) -> Any:

@@ -44,13 +44,36 @@ def page_to_atom(page: dict[str, Any], source_uri: str) -> dict[str, Any]:
     return atom
 
 
-def can_ingest(uri: str) -> bool:
+def _uri_kind(uri: str) -> str | None:
+    """Single classifier — 'notion' for live URIs, 'file' for cached
+    exports, None for everything else. can_ingest/ingest share it so a
+    new shape can't silently fall into the file branch."""
     lower = str(uri or "").lower()
-    return lower.startswith("notion://") or lower.endswith(".notion.json")
+    if lower.startswith("notion://"):
+        return "notion"
+    if lower.endswith(".notion.json"):
+        return "file"
+    return None
+
+
+def can_ingest(uri: str) -> bool:
+    return _uri_kind(uri) is not None
+
+
+_MAX_EXPORT_BYTES = 256 * 1024 * 1024  # exports materialize whole; refuse monsters
 
 
 def ingest_file(path: Path) -> Iterator[dict[str, Any]]:
     """Parse a cached ``.notion.json`` export into atoms."""
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise FileNotFoundError(f"Cannot stat {path}: {exc}") from exc
+    if size > _MAX_EXPORT_BYTES:
+        raise ValueError(
+            f"{path} is {size / 1e6:.0f} MB — over the {_MAX_EXPORT_BYTES // 2**20} MB "
+            "export cap; split the export or stream it through dlt"
+        )
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list):
         raise ValueError(f"Expected array of page objects in {path}")
@@ -65,25 +88,28 @@ def ingest_notion_uri(uri: str, client: NotionClient) -> Iterator[dict[str, Any]
     parsed = urlparse(uri)
     full_path = f"{parsed.netloc}{parsed.path}".strip("/")
     parts = full_path.split("/")
-    if len(parts) != 2 or parts[0] != "database":
+    if len(parts) != 2 or parts[0].lower() != "database":
         raise ValueError(
             f"Unsupported notion:// path: {full_path}. "
             "Expected notion://database/<database_id>"
         )
-    for page in client.query_database(parts[1]):
+    for page in client.query_database(parts[1], page_size=None):  # full drain
         yield page_to_atom(page, uri)
 
 
 def ingest(uri: str, client: NotionClient | None = None) -> Iterator[dict[str, Any]]:
     """Dispatch by URI shape; client required for notion:// URIs."""
-    if not can_ingest(uri):
-        raise ValueError(f"Cannot ingest: {uri}")
-    if str(uri).lower().startswith("notion://"):
+    kind = _uri_kind(uri)
+    if kind == "notion":
         if client is None:
             raise ValueError("notion:// ingestion requires a NotionClient")
         yield from ingest_notion_uri(uri, client)
         return
-    path = Path(str(uri)[len("file://"):] if str(uri).startswith("file://") else str(uri))
-    if not path.is_file():
-        raise FileNotFoundError(f"No such file: {path}")
-    yield from ingest_file(path)
+    if kind == "file":
+        raw = str(uri)
+        path = Path(urlparse(raw).path if raw.lower().startswith("file://") else raw)
+        if not path.is_file():
+            raise FileNotFoundError(f"No such file: {path}")
+        yield from ingest_file(path)
+        return
+    raise ValueError(f"Cannot ingest: {uri}")

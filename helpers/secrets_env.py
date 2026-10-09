@@ -9,9 +9,9 @@ resolves it *inside its own process*:
    environment — covers standalone runs and any env the operator wires.
 2. ``usr/secrets.env`` — a0's secrets vault is a plain dotenv file;
    ``§§secret(NAME)`` in tools resolves against the same store. The
-   server self-locates the a0 root from ``__file__`` (``usr/plugins/
-   notion/server/…`` → ``parents[3]``) and parses the file — no host
-   imports needed inside the subprocess.
+   server self-locates the a0 root from ``__file__`` by walking ancestors
+   for a ``usr/plugins`` dir and parses the file — no host imports
+   needed inside the subprocess.
 """
 
 from __future__ import annotations

@@ -22,13 +22,6 @@ def _client(http: FakeNotionHTTP) -> NotionClient:
 
 
 def test_auth_headers_and_version():
-    http = FakeNotionHTTP()
-    http.routes[("POST", "/search")] = {"results": [], "has_more": False}
-    _client(http).search("x")
-    # inspect the request headers on the captured call
-    req_headers = {}
-    # rebuild: FakeNotionHTTP doesn't store headers — quick manual check
-    # via a route recorder
     captured = {}
 
     def rec(req, timeout=None):
@@ -73,6 +66,38 @@ def test_get_page_and_clean_id():
     http.routes[("GET", "/pages/abc")] = {"id": "abc", "object": "page"}
     page = _client(http).get_page("abc")
     assert page["id"] == "abc"
+
+
+def test_get_pagination_uses_cursor_query():
+    """GET pagination must send start_cursor as a query param — a client
+    that re-issues the bare path would re-fetch page 1 forever."""
+    urls: list[str] = []
+    pages = iter([
+        {"results": [{"type": "paragraph"}], "has_more": True, "next_cursor": "c2"},
+        {"results": [{"type": "heading_1"}], "has_more": False},
+    ])
+
+    def rec(req, timeout=None):
+        urls.append(req.full_url)
+        return FakeResponse(next(pages))
+
+    c = NotionClient("ntn_t", timeout=5, opener=rec)
+    blocks = c.get_block_children("p1")
+    assert [b["type"] for b in blocks] == ["paragraph", "heading_1"]
+    assert "start_cursor=c2" in urls[1]
+
+
+def test_search_caps_total_results():
+    """page_size bounds TOTAL results, not just per-request — pagination
+    stops once the cap is reached even if has_more is true."""
+    def rec(req, timeout=None):
+        return FakeResponse({
+            "results": [{"object": "page", "id": "x"}] * 5,
+            "has_more": True, "next_cursor": "next",
+        })
+
+    c = NotionClient("ntn_t", timeout=5, opener=rec)
+    assert len(c.search("q", page_size=7)) == 7  # not unbounded
 
 
 def test_block_children_cap():

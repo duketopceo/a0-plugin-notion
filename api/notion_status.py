@@ -9,6 +9,8 @@ material and no filesystem paths.
 
 from __future__ import annotations
 
+import asyncio
+
 from helpers.api import ApiHandler
 
 from usr.plugins.notion.helpers import runtime
@@ -16,4 +18,5 @@ from usr.plugins.notion.helpers import runtime
 
 class NotionStatus(ApiHandler):
     async def process(self, input, request):
-        return {"ok": True, **runtime.status()}
+        # status() touches the vault file + settings — off the a0 loop
+        return {"ok": True, **(await asyncio.to_thread(runtime.status))}

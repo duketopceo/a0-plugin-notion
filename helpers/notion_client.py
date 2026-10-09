@@ -13,8 +13,10 @@ tests can fake the whole API without a network.
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 from typing import Any, Iterator
 
 NOTION_API_ROOT = "https://api.notion.com/v1"
@@ -29,8 +31,6 @@ def _clean_id(raw: str) -> str:
     """Notion accepts ids with or without dashes; normalize to dashed.
     Tolerates a pasted URL — the id is always the trailing 32-hex token
     of the last path segment (``…/My-Page-<id32>``)."""
-    import re
-
     s = str(raw or "").strip()
     s = s.split("?")[0].split("#")[0].rstrip("/")
     if "/" in s:
@@ -86,7 +86,7 @@ class NotionClient:
                 payload = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             try:
-                detail = exc.read().decode("utf-8", errors="replace")[:300]
+                detail = exc.read(8192).decode("utf-8", errors="replace")[:300]
             except Exception:
                 detail = ""
             code = exc.code
@@ -100,17 +100,45 @@ class NotionClient:
         return payload
 
     def _paginate(
-        self, method: str, path: str, body: dict[str, Any] | None = None
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        limit: int | None = None,
     ) -> Iterator[dict[str, Any]]:
+        """Yield result objects across cursors. ``limit`` bounds TOTAL
+        results — Notion's page_size is per-request; without a total cap a
+        search could walk every page in the workspace."""
         payload: dict[str, Any] = dict(body or {})
+        seen = 0
+        cursor: str | None = None
         while True:
-            page = self._request(method, path, payload if method != "GET" else None)
+            if method == "GET":
+                # GET pagination rides the query string, not the body.
+                sep = "&" if "?" in path else "?"
+                p = (
+                    f"{path}{sep}start_cursor={quote(str(cursor), safe='')}"
+                    if cursor else path
+                )
+                page = self._request(method, p, None)
+            else:
+                page = self._request(method, path, payload)
             for item in page.get("results") or []:
-                if isinstance(item, dict):
-                    yield item
-            cursor = page.get("next_cursor")
-            if not page.get("has_more") or not cursor:
+                if not isinstance(item, dict):
+                    continue
+                yield item
+                seen += 1
+                if limit is not None and seen >= limit:
+                    return
+            next_cursor = page.get("next_cursor")
+            if (
+                not page.get("has_more")
+                or not next_cursor
+                or next_cursor == cursor  # same-cursor guard: no livelock
+            ):
                 return
+            cursor = next_cursor
             payload = dict(payload, start_cursor=cursor)
 
     # -- API surface ----------------------------------------------------------
@@ -123,10 +151,11 @@ class NotionClient:
         page_size: int = 10,
     ) -> list[dict[str, Any]]:
         """POST /search — pages and/or databases matching *query*."""
-        body: dict[str, Any] = {"query": query, "page_size": min(int(page_size), 100)}
+        cap = max(1, min(int(page_size), 100))
+        body: dict[str, Any] = {"query": query, "page_size": cap}
         if filter_object in ("page", "database"):
             body["filter"] = {"value": filter_object, "property": "object"}
-        return list(self._paginate("POST", "/search", body))
+        return list(self._paginate("POST", "/search", body, limit=cap))
 
     def get_page(self, page_id: str) -> dict[str, Any]:
         return self._request("GET", f"/pages/{_clean_id(page_id)}")
@@ -134,27 +163,33 @@ class NotionClient:
     def get_block_children(
         self, block_id: str, *, max_blocks: int = 500
     ) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        for block in self._paginate(
-            "GET", f"/blocks/{_clean_id(block_id)}/children"
-        ):
-            out.append(block)
-            if len(out) >= max_blocks:
-                break
-        return out
+        """GET /blocks/<id>/children; *max_blocks* bounds TOTAL blocks
+        (<=0 means "server default" upstream — callers clamp first)."""
+        return list(
+            self._paginate(
+                "GET", f"/blocks/{_clean_id(block_id)}/children", limit=max_blocks
+            )
+        )
 
     def query_database(
         self,
         database_id: str,
         *,
         filter_body: dict[str, Any] | None = None,
-        page_size: int = 20,
+        page_size: int | None = 20,
     ) -> list[dict[str, Any]]:
-        body: dict[str, Any] = {"page_size": min(int(page_size), 100)}
+        """POST /databases/<id>/query. ``page_size`` bounds TOTAL rows;
+        pass ``None`` for a full-database drain (ingestion path only)."""
+        if page_size is None:
+            body: dict[str, Any] = {"page_size": 100}
+            limit = None
+        else:
+            limit = max(1, min(int(page_size), 100))
+            body = {"page_size": limit}
         if filter_body:
             body["filter"] = filter_body
         return list(
             self._paginate(
-                "POST", f"/databases/{_clean_id(database_id)}/query", body
+                "POST", f"/databases/{_clean_id(database_id)}/query", body, limit=limit
             )
         )

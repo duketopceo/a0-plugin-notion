@@ -45,9 +45,10 @@ If you prefer the remote server, add it under `mcp_servers` yourself and set
 ## How the token stays out of settings.json
 
 a0's stdio spawn passes a **safe-listed environment** plus the static `env`
-dict from the `mcp_servers` entry — so the token can neither ride the
-process env nor sit in the entry (it would be plaintext in settings.json).
-Instead the spawned server resolves it *inside its own process*:
+dict from the `mcp_servers` entry. The entry's `env` therefore carries only
+non-secret config (`NOTION_SECRET_NAME`, `NOTION_API_VERSION`, result caps) —
+never `NOTION_TOKEN`, which would sit plaintext in settings.json.
+Instead the spawned server resolves the token *inside its own process*:
 
 1. `NOTION_TOKEN` (or `secret_name`) in the process env — covers manual
    runs and operators who inject secrets another way.
@@ -55,7 +56,7 @@ Instead the spawned server resolves it *inside its own process*:
    against; the server self-locates the a0 root from `__file__`.
 
 So the vault stays the single source of truth and settings.json only ever
-holds `{type: stdio, command, args}` — no secrets, no absolute user paths.
+holds `{type: stdio, command, args, env: non-secret config}` — no secrets.
 
 ## Tools
 

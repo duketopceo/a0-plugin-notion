@@ -65,7 +65,6 @@ def _load_server(token=""):
                 sys.modules.pop(k, None)
             else:
                 sys.modules[k] = v
-    mod._test_token = token
     return mod, captured["tools"]
 
 
