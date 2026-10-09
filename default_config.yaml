@@ -1,0 +1,27 @@
+# a0-plugin-notion — defaults. a0 deep-merges this under the plugin's
+# config; every key is overridable by the matching NOTION_* env var.
+
+# Master switch — the plugin is inert until enabled (and until the token
+# exists in the secrets vault or NOTION_TOKEN env).
+enabled: false
+
+# Name of the secret holding the Notion integration token — looked up in
+# usr/secrets.env (the §§secret(...) vault) and in the process
+# environment. The VALUE never lands in settings.json.
+secret_name: "NOTION_TOKEN"
+
+# Notion REST API version header.
+api_version: "2022-06-28"
+
+# HTTP timeout (seconds) for Notion API calls inside the MCP server.
+http_timeout_s: 30
+
+# Hard caps — the server never returns more than this many search
+# results per call / blocks per page-content read.
+max_search_results: 25
+max_page_blocks: 500
+
+# Register the bundled stdio MCP server into settings["mcp_servers"] at
+# startup (idempotent; hooks.py uninstall removes it). Disable only if
+# you manage the mcp_servers entry yourself.
+auto_register_mcp: true

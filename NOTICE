@@ -1,0 +1,34 @@
+# NOTICE
+
+This repository (**a0-plugin-notion**, `duketopceo/a0-plugin-notion`)
+is a plugin for [Agent Zero](https://github.com/agent0ai/agent-zero).
+
+## Upstream
+
+Agent Zero is licensed under the MIT License by **Agent Zero, s.r.o**
+(contact: pr@agent-zero.ai). No upstream source files are vendored here, but
+this plugin targets Agent Zero's plugin APIs and adapts patterns from it.
+The `mcp` Python SDK is an existing Agent Zero dependency — the bundled
+stdio server rides it rather than vendoring a protocol implementation.
+
+## Provenance
+
+- The connector contract (URI dispatch, Atom shape, page→atom mapping) is a
+  port of the Khan fork's `connectors/notion.py` + `connectors/base.py`
+  (https://github.com/duketopceo/khan), itself MIT-licensed work by
+  Luke Kimball / duketopceo.
+- Khan's connector yielded `Atom` objects for an ingestion registry; this
+  plugin keeps the same atom shape in `helpers/atoms.py` and adds the
+  agent-facing half the issue asked for: a local stdio MCP server whose
+  tools (search / get_page / get_page_content / query_database) surface
+  inside stock a0 through `settings["mcp_servers"]`.
+- Secrets stay in a0's vault (`usr/secrets.env`, `§§secret()`): the spawned
+  server resolves the token inside its own process — `mcp_servers` carries
+  none.
+
+## This plugin
+
+Original work here is Copyright (c) 2026 Luke Kimball / duketopceo, released
+under the MIT terms in `LICENSE`.
+
+Preserve the upstream copyright notice and this NOTICE when redistributing.
