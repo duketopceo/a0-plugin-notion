@@ -65,7 +65,7 @@ class ApiHandler:
 
     @classmethod
     def requires_csrf(cls) -> bool:
-        return True
+        return cls.requires_auth()  # host ties CSRF to auth, not a blanket True
 
     @classmethod
     def requires_api_key(cls) -> bool:
