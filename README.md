@@ -1,11 +1,29 @@
-# a0-plugin-notion
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/wordmark-dark.svg">
+    <img alt="a0-plugin-notion" src="assets/brand/wordmark.svg" height="56">
+  </picture>
+</p>
 
-Notion connector for [Agent Zero](https://github.com/agent0ai/agent-zero):
-the agent gets `notion_search` / `notion_get_page` / `notion_get_page_content`
-/ `notion_query_database` tools through a bundled **local stdio MCP server**,
-plus a `notion://` / `.notion.json` ingestion path that emits atoms for
-knowledge pipelines. Ported from the Khan fork's `connectors/notion.py` —
-no upstream edits, read-only by design.
+Read-only Notion access for [Agent Zero](https://github.com/agent0ai/agent-zero) using an integration token from the a0 secrets vault, with no OAuth step.
+
+Status: v0.1.0, disabled by default, inert until enabled. See [ROADMAP.md](ROADMAP.md).
+
+The agent gets `notion_search`, `notion_get_page`, `notion_get_page_content` and `notion_query_database` through a bundled local stdio MCP server. A separate ingestion path (`notion://` URIs and `.notion.json` exports) emits atoms for knowledge pipelines. Ported from the Khan fork's `connectors/notion.py`; no upstream edits.
+
+<!-- TODO: screenshot of the settings panel from a running a0 -->
+
+## How it works
+
+```mermaid
+flowchart LR
+  A[a0 startup extension] -->|register once| S[settings mcp_servers]
+  S -->|spawn stdio| M[server/notion_server.py]
+  V[(usr/secrets.env)] -->|token read inside server| M
+  M -->|HTTPS, Notion-Version pinned| N[api.notion.com]
+  M -->|4 read-only tools| G[a0 agent]
+  P[pipelines] -->|helpers/atoms.py| N
+```
 
 ## Install
 
@@ -13,7 +31,7 @@ Drop the repo contents into `usr/plugins/notion/` (the directory name is the
 plugin name — imports and `/api/plugins/notion/*` routes key on it; the repo
 is `a0-plugin-notion` but the install path must be `notion`).
 
-## Setup — two steps
+## Quick start (two steps)
 
 1. Create a [Notion integration](https://www.notion.so/profile/integrations),
    copy the internal token (`ntn_…`), and share the pages/databases you want
@@ -31,7 +49,12 @@ runs on. `hooks.py uninstall` removes the entry.
 ## Why a local MCP server (the tradeoff)
 
 Notion runs an official remote MCP at `mcp.notion.com`. Choosing a bundled
-local server was deliberate:
+local server was deliberate. Notion's [overview](https://developers.notion.com/docs/mcp)
+describes OAuth authorization only; one third-party post
+([Scalekit](https://scalekit.com/blog/notion-mcp-vs-api)) states it is
+OAuth-only and not designed for headless agents. That is a single source;
+check Notion's docs before relying on it. Details in
+[docs/research/2026-10-10-landscape.md](docs/research/2026-10-10-landscape.md).
 
 | | remote `mcp.notion.com` | local stdio (this plugin) |
 |---|---|---|
@@ -85,10 +108,17 @@ these helpers rather than hammering the API from agent tools.
 
 ## Config
 
-`default_config.yaml` documents every key; env overrides use the
-`NOTION_*` prefix (`NOTION_ENABLED`, `NOTION_SECRET_NAME`, `NOTION_API_VERSION`,
-`NOTION_HTTP_TIMEOUT_S`, `NOTION_MAX_SEARCH_RESULTS`, `NOTION_MAX_PAGE_BLOCKS`,
-`NOTION_AUTO_REGISTER_MCP`).
+`default_config.yaml` documents every key; env overrides use the `NOTION_*` prefix.
+
+| Key | Default | Env | Meaning |
+|---|---|---|---|
+| `enabled` | `false` | `NOTION_ENABLED` | Master switch; plugin is inert until true |
+| `secret_name` | `NOTION_TOKEN` | `NOTION_SECRET_NAME` | Vault key holding the token. Selects any vault key, so keep it a `NOTION_*` name |
+| `api_version` | `2022-06-28` | `NOTION_API_VERSION` | `Notion-Version` header |
+| `http_timeout_s` | `30` | `NOTION_HTTP_TIMEOUT_S` | HTTP timeout for Notion calls |
+| `max_search_results` | `25` | `NOTION_MAX_SEARCH_RESULTS` | Cap per search or database query call |
+| `max_page_blocks` | `500` | `NOTION_MAX_PAGE_BLOCKS` | Cap per page-content read |
+| `auto_register_mcp` | `true` | `NOTION_AUTO_REGISTER_MCP` | Register the server in `mcp_servers` at startup |
 
 ## Diagnostics
 
@@ -120,3 +150,15 @@ stubbed where needed, no network, no token.
   it — delete `a0_notion` from MCP servers to fully remove it.
 - API surface is pinned to `Notion-Version: 2022-06-28` (config-overridable
   when Notion's dated API moves).
+
+## Status and roadmap
+
+See [ROADMAP.md](ROADMAP.md) and the [program plan](docs/plans/2026-10-10-002-notion-program-roadmap-plan.md). Design direction: [DESIGN.md](DESIGN.md).
+
+## Contributing
+
+Read [AGENTS.md](AGENTS.md) first: the plugin is read-only by contract, and adding write tools needs an issue-level decision. Run `python -m pytest tests/ -q` before opening a pull request.
+
+## Licence
+
+MIT, see [LICENSE](LICENSE) and [NOTICE](NOTICE).
