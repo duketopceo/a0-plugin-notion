@@ -20,8 +20,11 @@ SERVER_ENTRYPOINT = "notion_server.py"
 
 
 def server_path() -> str:
-    """Absolute path to the bundled server script."""
-    return str(Path(__file__).resolve().parent.parent / "server" / SERVER_ENTRYPOINT)
+    """Absolute path to the bundled server script. ``.absolute()`` NOT
+    ``.resolve()``: under a symlink install the spawned process must see
+    the usr/plugins path in its own ``__file__`` or ``secrets_env``
+    can't walk up to the vault."""
+    return str(Path(__file__).absolute().parent.parent / "server" / SERVER_ENTRYPOINT)
 
 
 def build_entry(cfg=None) -> dict[str, Any]:
