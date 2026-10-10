@@ -217,3 +217,18 @@ def test_vault_falls_back_to_dot_env(tmp_path):
     # secrets.env wins over .env when both exist
     (tmp_path / "usr" / "secrets.env").write_text("NOTION_TOKEN=from_secrets")
     assert secrets_env.read_vault("NOTION_TOKEN", a0_root=tmp_path) == "from_secrets"
+
+
+def test_a0_root_detects_symlink_install(tmp_path):
+    """usr/plugins/notion -> repo checkout: __file__ keeps the usr/plugins
+    component; resolve() follows the link OUT and misses the a0 root —
+    the vault silently goes unread."""
+    a0 = tmp_path / "a0"
+    (a0 / "usr" / "plugins").mkdir(parents=True)
+    repo = tmp_path / "a0-plugin-notion"
+    (repo / "helpers").mkdir(parents=True)
+    (a0 / "usr" / "plugins" / "notion").symlink_to(repo)
+
+    imported = (a0 / "usr" / "plugins" / "notion" / "helpers"
+                / "secrets_env.py")
+    assert secrets_env.a0_root_from(imported) == a0
