@@ -1,0 +1,11 @@
+name: notion
+title: Notion
+description: >-
+  Notion connector for Agent Zero — agent-facing search/read tools via a
+  bundled local stdio MCP server, plus ingestion atoms for knowledge
+  pipelines. Token stays in the a0 secrets vault.
+version: 0.1.0
+per_project_config: false
+per_agent_config: false
+settings_sections:
+  - external
